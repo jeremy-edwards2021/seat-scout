@@ -38,7 +38,7 @@ LOG = logging.getLogger("seatscout")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 DB_PATH = os.environ.get("DB_PATH", "seat_scout.db")
-MAX_CONCURRENT_SCRAPES = int(os.environ.get("MAX_CONCURRENT_SCRAPES", "3"))
+MAX_CONCURRENT_SCRAPES = int(os.environ.get("MAX_CONCURRENT_SCRAPES", "1"))
 DEFAULT_INTERVAL = int(os.environ.get("DEFAULT_INTERVAL", "300"))  # 5 min per search
 DAYS_AHEAD_DEFAULT = int(os.environ.get("DAYS", "7"))
 
@@ -280,7 +280,13 @@ async def scheduler_loop():
             pw = await async_playwright().start()
             browser = await pw.chromium.launch(
                 headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--single-process",
+                    "--no-zygote",
+                    "--disable-gpu",
+                ],
             )
             LOG.info("Browser launched for scraping")
         except Exception as e:
