@@ -280,13 +280,7 @@ async def scheduler_loop():
             pw = await async_playwright().start()
             browser = await pw.chromium.launch(
                 headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--single-process",
-                    "--no-zygote",
-                    "--disable-gpu",
-                ],
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
             )
             LOG.info("Browser launched for scraping")
         except Exception as e:
