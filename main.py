@@ -273,17 +273,24 @@ async def scheduler_loop():
     """Continuously poll the DB for due searches and scrape them."""
     pw = None
     browser = None
-    try:
-        pw = await async_playwright().start()
-        browser = await pw.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
-        LOG.info("Browser launched for scraping")
-    except Exception as e:
-        LOG.error(f"Browser launch failed: {e} — scheduler will retry in 60s")
-        await asyncio.sleep(60)
-        return  # exit loop; lifespan will need restart, but app still serves
+    # Retry browser launch forever — the web server keeps serving regardless
+    while browser is None:
+        try:
+            pw = await async_playwright().start()
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+            )
+            LOG.info("Browser launched for scraping")
+        except Exception as e:
+            LOG.error(f"Browser launch failed: {e} — retrying in 60s")
+            try:
+                if pw:
+                    await pw.stop()
+            except Exception:
+                pass
+            pw = None
+            await asyncio.sleep(60)
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCRAPES)
     failures = 0
 
