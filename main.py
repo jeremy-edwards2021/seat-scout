@@ -273,6 +273,7 @@ async def scheduler_loop():
     """Continuously poll the DB for due searches and scrape them."""
     pw = None
     browser = None
+    install_attempted = False
     # Retry browser launch forever — the web server keeps serving regardless
     while browser is None:
         try:
@@ -283,13 +284,32 @@ async def scheduler_loop():
             )
             LOG.info("Browser launched for scraping")
         except Exception as e:
-            LOG.error(f"Browser launch failed: {e} — retrying in 60s")
+            LOG.error(f"Browser launch failed: {e}")
             try:
                 if pw:
                     await pw.stop()
             except Exception:
                 pass
             pw = None
+
+            # Runtime fallback: browser binary missing — download it now
+            if not install_attempted and ("Executable doesn't exist" in str(e)
+                                          or "playwright install" in str(e).lower()):
+                install_attempted = True
+                LOG.warning("Browser binary missing — running 'playwright install chromium' (~90s)...")
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable, "-m", "playwright", "install", "chromium",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
+                    )
+                    await asyncio.wait_for(proc.wait(), timeout=300)
+                    LOG.info(f"playwright install finished (rc={proc.returncode})")
+                    continue  # retry launch immediately after install
+                except Exception as ie:
+                    LOG.error(f"playwright install failed: {ie}")
+
+            LOG.info("Retrying browser launch in 60s")
             await asyncio.sleep(60)
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCRAPES)
     failures = 0
