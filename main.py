@@ -172,7 +172,7 @@ async def scrape_one(movie_id: str, date: str, zip_code: str,
     """)
     try:
         await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-        await page.wait_for_timeout(10000)
+        await page.wait_for_timeout(8000)
         body = await page.inner_text("body")
     except Exception as e:
         LOG.warning(f"scrape error: {e}")
@@ -319,6 +319,7 @@ async def scheduler_loop():
             await asyncio.sleep(60)
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCRAPES)
     failures = 0
+    in_flight: set = set()  # search ids currently being processed
 
     while True:
         try:
@@ -330,13 +331,22 @@ async def scheduler_loop():
             ).fetchall()
             conn.close()
 
-            if due:
-                LOG.info(f"scheduler: {len(due)} searches due")
+            # Skip searches already running — prevents task pile-up
+            pending = [s for s in due if s["id"] not in in_flight]
+            if pending:
+                LOG.info(f"scheduler: {len(pending)} searches due")
 
-            tasks = [
-                process_search(s, browser, semaphore) for s in due
-            ]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            async def run_one(s):
+                in_flight.add(s["id"])
+                try:
+                    await process_search(s, browser, semaphore)
+                except Exception:
+                    LOG.exception(f"search #{s['id']} crashed")
+                finally:
+                    in_flight.discard(s["id"])
+
+            await asyncio.gather(*(run_one(s) for s in pending),
+                                 return_exceptions=True)
 
         except Exception as e:
             LOG.error(f"scheduler error: {e}")
@@ -373,7 +383,12 @@ async def process_search(search: sqlite3.Row, browser, semaphore):
         new_alerts = []
 
         for date in dates:
-            theaters = await scrape_one(movie_id, date, zip_code, formats, browser)
+            try:
+                theaters = await scrape_one(movie_id, date, zip_code, formats, browser)
+            except Exception:
+                LOG.exception(f"search #{sid}: scrape failed for {date} — skipping")
+                continue
+            LOG.info(f"search #{sid} {date}: {len(theaters)} theaters parsed")
             for t in theaters:
                 for s in t["showtimes"]:
                     if s["status"] == "available":
