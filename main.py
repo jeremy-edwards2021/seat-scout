@@ -495,13 +495,19 @@ async def create_search(
     except ValueError as e:
         return HTMLResponse(f"<div class='err'>{e}</div>", status_code=400)
 
-    # Allow "City:ZIP" format
-    if ":" in city:
-        parts = city.split(":", 1)
-        city_name = parts[0].strip()
-        zip_code = parts[1].strip()
+    # Accept "City (ZIP)" or "City:ZIP" or plain city name
+    city_clean = city.strip()
+    zip_code = None
+    m_paren = re.match(r'^(.+?)\s*\((\d{5})\)$', city_clean)
+    m_colon = re.match(r'^(.+?)\s*:\s*(\d{5})$', city_clean)
+    if m_paren:
+        city_name = m_paren.group(1).strip()
+        zip_code = m_paren.group(2)
+    elif m_colon:
+        city_name = m_colon.group(1).strip()
+        zip_code = m_colon.group(2)
     else:
-        city_name = city.strip()
+        city_name = city_clean
         zip_code = resolve_zip(city_name)
 
     conn = db()
@@ -583,6 +589,17 @@ async def api_search_detail(sid: int):
     })
 
 
+@app.get("/api/theaters")
+async def api_theaters(q: str = ""):
+    conn = db()
+    rows = conn.execute(
+        "SELECT DISTINCT theater_name FROM showtimes WHERE theater_name LIKE ? ORDER BY theater_name",
+        (f"%{q}%",)
+    ).fetchall()
+    conn.close()
+    return [r["theater_name"] for r in rows]
+
+
 @app.get("/api/health")
 async def health():
     conn = db()
@@ -597,43 +614,47 @@ async def health():
 # ── Dashboard ────────────────────────────────────────────────────────────────
 
 CSS = """
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-       background: #0d1117; color: #c9d1d9; padding: 16px; max-width: 900px; margin: auto; }
-h1 { font-size: 26px; color: #58a6ff; margin-bottom: 4px; }
-.sub { color: #8b949e; font-size: 13px; margin-bottom: 20px; }
-.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-        padding: 16px; margin-bottom: 16px; }
-.form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-input, select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d;
-                        background: #0d1117; color: #c9d1d9; font-size: 14px; }
-input[type=text] { flex: 1; min-width: 150px; }
-button { background: #238636; border-color: #238636; color: white; cursor: pointer;
-         font-weight: 600; padding: 8px 20px; }
-button:hover { background: #2ea043; }
-button.danger { background: #da3633; border-color: #da3633; padding: 4px 12px; font-size: 12px; }
-button.danger:hover { background: #f85149; }
-.stat { display: inline-block; margin-right: 24px; }
-.stat .num { font-size: 28px; font-weight: 700; color: #58a6ff; }
-.stat .label { font-size: 12px; color: #8b949e; }
-.search-card { border-left: 3px solid #58a6ff; padding-left: 12px; margin-bottom: 16px; }
-.search-header { display: flex; justify-content: space-between; align-items: center; }
-.search-title { font-size: 18px; font-weight: 600; color: #f0f6fc; }
-.search-meta { color: #8b949e; font-size: 12px; }
-.theater { margin: 8px 0; padding: 8px 0; border-bottom: 1px solid #21262d; }
-.theater:last-child { border-bottom: none; }
-.t-name { font-weight: 600; color: #f0f6fc; }
-.t-dist { color: #8b949e; font-size: 12px; margin-left: 8px; }
-.st { display: inline-block; padding: 3px 8px; margin: 2px; border-radius: 4px; font-size: 12px; }
-.st-avail { background: #1a3a2a; color: #3fb950; }
-.st-sold { background: #3a1a1a; color: #f85149; }
-.alert { background: #1a3a2a; color: #3fb950; padding: 6px 10px; border-radius: 4px;
-         margin: 4px 0; font-size: 13px; }
-.alert.sold { background: #3a1a1a; color: #f85149; }
-.empty { text-align: center; color: #8b949e; padding: 30px; }
-.refresh { color: #8b949e; font-size: 12px; text-align: center; margin-top: 16px; }
-.err { color: #f85149; padding: 16px; background: #3a1a1a; border-radius: 6px; margin: 16px 0; }
-.flash { color: #3fb950; padding: 8px 12px; background: #1a3a2a; border-radius: 6px; margin-bottom: 12px; }
+* { box-sizing:border-box; margin:0; padding:0 }
+body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+       background:#0d1117; color:#c9d1d9; padding:24px; max-width:960px; margin:auto }
+h1 { font-size:24px; font-weight:700; color:#f0f6fc; letter-spacing:-.3px }
+.sub { color:#8b949e; font-size:13px; margin:2px 0 24px }
+.label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:#8b949e; margin-bottom:6px }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+.row input { flex:1; min-width:140px }
+input,button { padding:10px 14px; border-radius:8px; border:1px solid #30363d;
+               background:#161b22; color:#f0f6fc; font-size:14px; outline:none; transition:border .15s }
+input:focus { border-color:#58a6ff }
+input::placeholder { color:#484f58 }
+button { background:#238636; border-color:#238636; color:#fff; cursor:pointer;
+         font-weight:600; flex:0 0 auto; white-space:nowrap }
+button:hover { background:#2ea043 }
+button.danger { background:#da3633; border-color:#da3633; padding:4px 12px; font-size:12px }
+button.danger:hover { background:#f85149 }
+.btn-sm { padding:4px 10px; font-size:12px }
+.card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; margin-bottom:16px }
+.stats { display:flex; gap:24px; padding:4px 0 }
+.stat-val { font-size:22px; font-weight:700; color:#58a6ff; line-height:1 }
+.stat-lbl { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.4px; margin-top:2px }
+.shdr { display:flex; justify-content:space-between; align-items:start; margin-bottom:8px }
+.stitle { font-size:16px; font-weight:600; color:#f0f6fc }
+.smeta { font-size:12px; color:#8b949e; margin-top:1px; display:flex; gap:12px; flex-wrap:wrap }
+.section { margin:12px 0 0 }
+.sh2 { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.4px; color:#8b949e; margin-bottom:8px }
+.theater { padding:0; margin:0 0 10px }
+.theater:last-child { margin-bottom:0 }
+.tname { font-weight:600; color:#f0f6fc; font-size:14px }
+.tdist { color:#8b949e; font-size:11px; margin-left:6px }
+.st { display:inline-block; padding:2px 8px; margin:2px; border-radius:4px; font-size:12px }
+.st-avail { background:#0d2818; color:#3fb950 }
+.st-sold { background:#281010; color:#f85149 }
+.al { font-size:13px; padding:4px 0; color:#3fb950 }
+.al.sold { color:#f85149 }
+.empty { text-align:center; color:#484f58; padding:40px; font-size:14px }
+.ft { color:#484f58; font-size:12px; text-align:center; margin-top:24px; padding-bottom:40px }
+.ft span { color:#58a6ff; cursor:pointer }
+.flash { padding:10px 14px; border-radius:8px; margin-bottom:12px; font-size:13px; background:#0d2818; color:#3fb950 }
+.err { padding:10px 14px; border-radius:8px; margin-bottom:12px; font-size:13px; background:#281010; color:#f85149 }
 """
 
 
@@ -684,8 +705,8 @@ async def dashboard(dup: int = 0, created: int = 0, deleted: int = 0):
                     st_html += f'<span class="st {cls}">{st["time"]} [{st["format"]}]</span>'
                 dist = t_sts[0]["theater_distance"]
                 theaters_html += (
-                    f'<div class="theater">'
-                    f'<div class="t-name">{tname}<span class="t-dist">{dist} mi · {date}</span></div>'
+                    f'<div class="theater" data-theater="{tname.lower()}">'
+                    f'<div class="tname">{tname}<span class="tdist">{dist} mi · {date}</span></div>'
                     f'{st_html}</div>'
                 )
 
@@ -699,11 +720,16 @@ async def dashboard(dup: int = 0, created: int = 0, deleted: int = 0):
         next_s = (s["next_scrape"] or "—")[:19]
 
         cards += f"""
-        <div class="card search-card">
-          <div class="search-header">
+        <div class="card search-card" data-search="{s["id"]}">
+          <div class="shdr">
             <div>
-              <div class="search-title">{s["movie"]} · {s["city"]}</div>
-              <div class="search-meta">{s["formats"]} · {checks} checks · last: {last} · next: {next_s}</div>
+              <div class="stitle">{s["movie"]} · {s["city"]}</div>
+              <div class="smeta">
+                <span>{s["formats"]}</span>
+                <span>{checks} checks</span>
+                <span>last {last}</span>
+                <span>next {next_s}</span>
+              </div>
             </div>
             <form method="post" action="/search/{s["id"]}/delete" style="margin:0"
                   onsubmit="return confirm('Remove this search?')">
@@ -733,6 +759,23 @@ async def dashboard(dup: int = 0, created: int = 0, deleted: int = 0):
             '</div>'
         )
 
+    cities_json = json.dumps(list(CITY_ZIPS.keys()))
+    city_options = ''.join(
+        f'<option value="{c.title()}">' for c in sorted(CITY_ZIPS.keys())
+    )
+    movies_json = json.dumps([
+        {"name": k.title(), "id": v}
+        for k, v in sorted(KNOWN_MOVIES.items())
+    ])
+    movie_options = ''.join(
+        f'<option value="{m["name"]}">' for m in sorted(
+            [{"name": k.title()} for k in KNOWN_MOVIES],
+            key=lambda x: x["name"].lower()
+        )
+    )
+    formats_list = ["IMAX 70mm", "70mm Film", "Standard", "Dolby Cinema", "Digital",
+                    "3D", "IMAX 3D", "D-BOX", "ScreenX", "4DX", "RPX", "RealD 3D"]
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -743,36 +786,96 @@ async def dashboard(dup: int = 0, created: int = 0, deleted: int = 0):
 </head>
 <body>
 <h1>Seat Scout</h1>
-<div class="sub">Autonomous seat availability monitor · any movie · any US city · 24/7</div>
+<div class="sub">Autonomous seat monitor · any movie · any US city · 24/7</div>
 
 <div class="card">
-  <form method="post" action="/search">
-    <div class="form-row">
-      <input type="text" name="movie" placeholder="Movie (e.g. The Odyssey)" required>
-      <input type="text" name="city" placeholder="City (e.g. New York) or City:ZIP" required>
+  <form method="post" action="/search" autocomplete="off" id="search-form">
+    <div class="label">Track seats</div>
+    <div class="row" style="margin-bottom:6px">
+      <input type="text" name="movie" id="movie-input" placeholder="Movie title" list="movies" required>
+      <datalist id="movies">{movie_options}</datalist>
+      <input type="text" name="city" id="city-input" placeholder="US city" list="cities" required>
+      <datalist id="cities">{city_options}</datalist>
+      <input type="text" name="formats" id="format-input" placeholder="Format" list="formats"
+             value="IMAX 70mm,70mm Film">
+      <datalist id="formats">
+        {''.join(f'<option value="{f}">' for f in formats_list)}
+      </datalist>
+      <input type="number" name="days" value="3" min="1" max="14"
+             style="width:60px" title="Days ahead">
+      <button type="submit">Track</button>
     </div>
-    <div class="form-row">
-      <input type="text" name="formats" value="IMAX 70mm,70mm Film" placeholder="Formats (comma separated)">
-      <input type="number" name="interval" value="{DEFAULT_INTERVAL}" min="60" max="3600"
-             style="width:90px" title="Seconds between checks">
-      <input type="number" name="days" value="{DAYS_AHEAD_DEFAULT}" min="1" max="30"
-             style="width:70px" title="Days ahead to scan">
-      <button type="submit">Add Search</button>
+    <div style="font-size:11px;color:#484f58;margin-top:4px">
+      Scans every 5 min · select movie from suggestions · type city name
     </div>
   </form>
 </div>
 
 <div class="card">
-  <div class="stat"><div class="num">{n_searches}</div><div class="label">active searches</div></div>
-  <div class="stat"><div class="num">{n_seats}</div><div class="label">seats available</div></div>
-  <div class="stat"><div class="num">{n_theaters}</div><div class="label">theaters</div></div>
+  <div class="stats">
+    <div><div class="stat-val">{n_searches}</div><div class="stat-lbl">Active</div></div>
+    <div><div class="stat-val">{n_seats}</div><div class="stat-lbl">Seats</div></div>
+    <div><div class="stat-val">{n_theaters}</div><div class="stat-lbl">Theaters</div></div>
+  </div>
 </div>
 
 {flash}
+
+<div id="filter-bar" style="display:none;margin-bottom:12px">
+  <input type="text" id="theater-filter" placeholder="Filter theaters..." style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #30363d;background:#161b22;color:#f0f6fc;font-size:13px;outline:none">
+</div>
+
 {cards}
 
-<div class="refresh">Auto-refreshes every 60s · <span onclick="location.reload()" style="color:#58a6ff;cursor:pointer">refresh now</span></div>
-<script>setTimeout(() => location.reload(), 60000);</script>
+<div class="ft">Refreshes every 60s · <span onclick="location.reload()">reload</span></div>
+<script>
+  var mc = {movies_json};
+  var movieInput = document.getElementById('movie-input');
+  movieInput.addEventListener('input', function () {{
+    var v = this.value.toLowerCase();
+    var dl = document.getElementById('movies');
+    dl.innerHTML = '';
+    mc.forEach(function (m) {{
+      if (m.name.toLowerCase().includes(v) && v.length > 0) {{
+        var o = document.createElement('option');
+        o.value = m.name;
+        dl.appendChild(o);
+      }}
+    }});
+  }});
+
+  var cc = {cities_json};
+  var cityInput = document.getElementById('city-input');
+  cityInput.addEventListener('input', function () {{
+    var v = this.value.toLowerCase().split(' ')[0];
+    var dl = document.getElementById('cities');
+    dl.innerHTML = '';
+    cc.forEach(function (c) {{
+      if (c.includes(v) && v.length > 0) {{
+        var o = document.createElement('option');
+        o.value = c.charAt(0).toUpperCase() + c.slice(1);
+        dl.appendChild(o);
+      }}
+    }});
+  }});
+
+  var fi = document.getElementById('format-input');
+  fi.addEventListener('focus', function () {{ this.select(); }});
+
+  var tf = document.getElementById('theater-filter');
+  var cards = document.querySelectorAll('.search-card');
+  if (cards.length) {{
+    document.getElementById('filter-bar').style.display = 'block';
+    tf.addEventListener('input', function () {{
+      var q = this.value.toLowerCase().trim();
+      document.querySelectorAll('.theater').forEach(function (t) {{
+        t.style.display = (!q || t.getAttribute('data-theater').includes(q)) ? '' : 'none';
+      }});
+    }});
+  }}
+
+  setTimeout(function () {{ location.reload(); }}, 60000);
+</script>
 </body>
 </html>"""
 
